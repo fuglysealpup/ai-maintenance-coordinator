@@ -1,0 +1,704 @@
+<title>Maintenance Coordinator Agent</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap">
+<style>
+/* Layout: an ops console. Three panes side by side (tenant's phone, agent's reasoning, owner/manager desk), stacking on narrow screens. */
+:root {
+  --bg: #eef1f3;
+  --panel: #ffffff;
+  --sunk: #f5f7f8;
+  --line: #d8dee3;
+  --fg: #17212b;
+  --muted: #5b6875;
+  --accent: #0d6b6e;
+  --accent-soft: #dcefef;
+  --bubble-me: #0d6b6e;
+  --bubble-me-fg: #ffffff;
+  --bubble-them: #e6eaee;
+  --emerg: #c0392b; --emerg-soft: #fbe5e2;
+  --warn: #a8670a; --warn-soft: #fbefd9;
+  --ok: #2e7d4f; --ok-soft: #e1f2e7;
+  --info: #2459a6; --info-soft: #e2ebf8;
+  --other: #6b4ca5; --other-soft: #ece6f6;
+  --phone: #1c252e;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1418; --panel: #161d23; --sunk: #1c242b; --line: #2b353e; --fg: #e3e8ec; --muted: #94a1ad;
+  --accent: #4fb3b1; --accent-soft: #173638; --bubble-me: #2a8f8d; --bubble-me-fg: #ffffff; --bubble-them: #26313a;
+  --emerg: #ef7a6b; --emerg-soft: #3b1f1c; --warn: #e2a64a; --warn-soft: #3a2c15; --ok: #6cc890; --ok-soft: #173126;
+  --info: #7fa9ec; --info-soft: #1b2a40; --other: #b39ae6; --other-soft: #2a2140; --phone: #050708; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1418; --panel: #161d23; --sunk: #1c242b; --line: #2b353e; --fg: #e3e8ec; --muted: #94a1ad;
+  --accent: #4fb3b1; --accent-soft: #173638; --bubble-me: #2a8f8d; --bubble-me-fg: #ffffff; --bubble-them: #26313a;
+  --emerg: #ef7a6b; --emerg-soft: #3b1f1c; --warn: #e2a64a; --warn-soft: #3a2c15; --ok: #6cc890; --ok-soft: #173126;
+  --info: #7fa9ec; --info-soft: #1b2a40; --other: #b39ae6; --other-soft: #2a2140; --phone: #050708; color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
+.wrap { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px 28px; max-width: 1480px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+h1 { font-family: var(--font-display); font-size: 22px; letter-spacing: .01em; }
+h2 { font-family: var(--font-display); font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; }
+h3 { font-size: 13px; font-weight: 600; }
+button { font: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+
+/* Header */
+.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+.brand p { margin: 2px 0 0; color: var(--muted); max-width: 62ch; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.ctl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.ctl input { width: 78px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); font-family: var(--font-mono); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg button { border: 0; background: var(--panel); color: var(--muted); padding: 5px 10px; font-size: 12px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.btn { border: 1px solid var(--line); background: var(--panel); color: var(--fg); padding: 6px 12px; border-radius: 7px; font-size: 12px; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { color: var(--emerg); }
+
+.scen { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.scen button { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 9px; padding: 8px 12px; min-width: 150px; }
+.scen button small { color: var(--muted); font-size: 11px; }
+.scen button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
+.scen .tag { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+
+/* Panes */
+.grid { display: grid; grid-template-columns: minmax(300px, 370px) minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1120px) { .grid { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); } .pane.owner { grid-column: 1 / -1; } }
+@media (max-width: 720px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.pane { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+
+/* Phone */
+.phone-pane { background: transparent; border: 0; padding: 0; }
+.phone { background: var(--phone); border-radius: 30px; padding: 10px; box-shadow: 0 10px 30px rgba(10,20,30,.18); }
+.screen { background: var(--panel); border-radius: 22px; overflow: hidden; display: flex; flex-direction: column; height: 640px; max-height: 78vh; }
+.sbar { display: flex; justify-content: space-between; padding: 8px 18px 0; font-size: 11px; font-weight: 600; }
+.contact { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 12px 10px; border-bottom: 1px solid var(--line); }
+.avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 600; font-size: 13px; }
+.contact b { font-size: 13px; }
+.contact span { font-size: 11px; color: var(--muted); }
+.msgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; background: var(--panel); }
+.stamp { align-self: center; font-size: 10.5px; color: var(--muted); margin: 6px 0 2px; }
+.bub { max-width: 82%; padding: 7px 11px; border-radius: 17px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.bub.me { align-self: flex-end; background: var(--bubble-me); color: var(--bubble-me-fg); border-bottom-right-radius: 5px; }
+.bub.them { align-self: flex-start; background: var(--bubble-them); color: var(--fg); border-bottom-left-radius: 5px; }
+.note { align-self: center; font-size: 11px; color: var(--muted); text-align: center; max-width: 90%; }
+.typing { align-self: flex-start; background: var(--bubble-them); border-radius: 17px; padding: 10px 12px; display: flex; gap: 4px; }
+.typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+.typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 60%, 100% { opacity: .25 } 30% { opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .typing i { animation: none; opacity: .6; } }
+.quick { display: flex; gap: 6px; overflow-x: auto; padding: 6px 10px 0; }
+.quick button { flex: 0 0 auto; border: 1px solid var(--line); background: var(--sunk); color: var(--fg); border-radius: 14px; padding: 4px 10px; font-size: 12px; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.compose { display: flex; gap: 6px; padding: 8px 10px 12px; }
+.compose input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 18px; padding: 8px 12px; background: var(--sunk); color: var(--fg); font-size: 14px; }
+.send { width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--accent); color: #fff; font-size: 16px; display: grid; place-items: center; flex: 0 0 auto; }
+.send:disabled { opacity: .45; cursor: default; }
+.under { font-size: 12px; color: var(--muted); padding: 2px 6px; }
+.banner { font-size: 12px; background: var(--warn-soft); color: var(--fg); border-radius: 8px; padding: 8px 10px; }
+
+/* Agent decisions */
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.c-emergency { background: var(--emerg-soft); color: var(--emerg); }
+.c-self_fix { background: var(--ok-soft); color: var(--ok); }
+.c-vendor { background: var(--info-soft); color: var(--info); }
+.c-not_maintenance { background: var(--other-soft); color: var(--other); }
+.c-gathering_info, .c-none { background: var(--sunk); color: var(--muted); }
+.c-pending { background: var(--warn-soft); color: var(--warn); }
+.c-approved { background: var(--ok-soft); color: var(--ok); }
+.c-declined { background: var(--emerg-soft); color: var(--emerg); }
+.lanes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+@media (max-width: 520px) { .lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lane { border: 1px solid var(--line); border-radius: 9px; padding: 8px; font-size: 12px; color: var(--muted); background: var(--sunk); display: flex; flex-direction: column; gap: 2px; }
+.lane b { color: var(--fg); font-size: 12.5px; }
+.lane.on { color: var(--fg); }
+.lane.on.l-emergency { border-color: var(--emerg); background: var(--emerg-soft); }
+.lane.on.l-self_fix { border-color: var(--ok); background: var(--ok-soft); }
+.lane.on.l-vendor { border-color: var(--info); background: var(--info-soft); }
+.lane.on.l-not_maintenance { border-color: var(--other); background: var(--other-soft); }
+.block { display: flex; flex-direction: column; gap: 6px; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.reason { background: var(--sunk); border-left: 3px solid var(--accent); padding: 8px 10px; border-radius: 0 8px 8px 0; font-size: 13px; }
+ol.steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.vendors { display: flex; flex-direction: column; gap: 4px; }
+.v { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; }
+.v .vt { color: var(--muted); font-size: 11.5px; }
+.v .vr { text-align: right; font-size: 11.5px; color: var(--muted); }
+.v.pick { border-color: var(--info); background: var(--info-soft); }
+.v.pick .why { grid-column: 1 / -1; color: var(--fg); font-size: 12.5px; margin-top: 3px; }
+.v.dim { opacity: .55; padding-block: 4px; }
+.v.dim .vt { display: none; }
+.times { display: flex; flex-wrap: wrap; gap: 6px; }
+.times span { border: 1px dashed var(--info); color: var(--info); border-radius: 7px; padding: 3px 8px; font-size: 12px; }
+.meter { position: relative; height: 10px; background: var(--sunk); border-radius: 5px; border: 1px solid var(--line); }
+.meter .rng { position: absolute; top: 1px; bottom: 1px; border-radius: 4px; background: var(--info); }
+.meter .rng.over { background: var(--warn); }
+.meter .lim { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--fg); }
+.meter-l { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+.empty { color: var(--muted); font-size: 13px; padding: 18px 8px; text-align: center; border: 1px dashed var(--line); border-radius: 9px; }
+details.hist summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.hist ol { margin: 6px 0 0; padding-left: 18px; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+.err { color: var(--emerg); font-size: 12.5px; }
+
+/* Owner / manager */
+.card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.card.alert { border-color: var(--warn); background: var(--warn-soft); }
+.card.esc { border-color: var(--other); background: var(--other-soft); }
+.card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.amt { font-family: var(--font-mono); font-size: 20px; font-weight: 500; }
+.acts { display: flex; gap: 8px; }
+.wo { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; font-size: 13px; }
+.wo div { min-width: 0; overflow-wrap: anywhere; }
+.wo label { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; max-height: 360px; overflow-y: auto; }
+.log li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+.log li:first-child { border-top: 0; }
+.log time { font-family: var(--font-mono); font-size: 11px; color: var(--muted); padding-top: 1px; }
+.log .who { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin-right: 6px; color: var(--accent); }
+.log .who.owner { color: var(--warn); } .log .who.policy { color: var(--muted); } .log .who.manager { color: var(--other); }
+footer { font-size: 12px; color: var(--muted); max-width: 90ch; }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>Maintenance Coordinator Agent</h1>
+      <p>You are the tenant. Text the agent for <b>Fogline Property Management</b>, a fictional SF firm, and watch it triage, pick a vendor from the firm's bench, and ask the owner before spending over the limit. The agent is live Claude, not a script.</p>
+    </div>
+    <div class="controls">
+      <label class="ctl" for="limit">Owner approval limit $<input id="limit" type="number" min="0" step="25" value="300"></label>
+      <span class="ctl">Agent
+        <span class="seg" role="group" aria-label="Agent speed">
+          <button type="button" id="tierDefault" aria-pressed="true">Thorough</button>
+          <button type="button" id="tierQuick" aria-pressed="false">Fast</button>
+        </span>
+      </span>
+      <button type="button" class="btn" id="reset">Restart scenario</button>
+    </div>
+  </header>
+
+  <nav class="scen" id="scen" aria-label="Scenarios"></nav>
+
+  <main class="grid">
+    <section class="pane phone-pane" aria-label="Tenant text messages">
+      <div class="phone">
+        <div class="screen">
+          <div class="sbar"><span id="clock" class="mono">7:40</span><span>LTE ▮▮▮</span></div>
+          <div class="contact"><div class="avatar">FM</div><b>Fogline Maintenance</b><span class="mono">(415) 555-0142</span></div>
+          <div class="msgs" id="msgs" aria-live="polite"></div>
+          <div class="quick" id="quick"></div>
+          <form class="compose" id="compose">
+            <input id="box" autocomplete="off" placeholder="Text message" aria-label="Message as the tenant">
+            <button class="send" id="sendBtn" type="submit" aria-label="Send">↑</button>
+          </form>
+        </div>
+      </div>
+      <div class="under" id="who"></div>
+      <div class="banner" id="banner" hidden></div>
+    </section>
+
+    <section class="pane" aria-label="Agent decisions">
+      <div class="pane-head"><h2>Agent decisions</h2><span id="status" class="chip c-none">Waiting for tenant</span></div>
+      <div id="agent"></div>
+    </section>
+
+    <section class="pane owner" aria-label="Owner and manager view">
+      <div class="pane-head"><h2>Owner &amp; manager</h2><span class="muted" id="ownerName"></span></div>
+      <div id="approvals" class="block"></div>
+      <div id="escalations" class="block"></div>
+      <div class="block"><h3>Work order</h3><div id="wo"></div></div>
+      <div class="block"><h3>Activity log</h3><ul class="log" id="log"></ul></div>
+    </section>
+  </main>
+
+  <footer>Everything here is made up: the firm, tenants, owners, vendors and prices. Vendor confirmations are simulated, and nothing is actually texted. Each message you send uses your own Claude usage.</footer>
+</div>
+
+<script>
+(() => {
+  // ---------- Data ----------
+  const FIRM = { name: "Fogline Property Management", manager: "Alex Rivera (portfolio manager)" };
+
+  const VENDORS = [
+    { id: "bayview", name: "Bayview Plumbing & Drain", trade: "Plumbing", area: "San Francisco", hours: "24/7, emergency arrival about 90 min", rate: "$165 service call + $145/hr; after-hours 1.5x", rating: 4.8, jobs: 38, note: "Preferred plumber; fixed 12 leaks for us this year" },
+    { id: "mission", name: "Mission Rooter", trade: "Plumbing, drains", area: "San Francisco", hours: "Mon–Sat 7am–6pm, usually 1–2 days out", rate: "$129 service call + $120/hr", rating: 4.4, jobs: 15, note: "Cheaper, slower; no after-hours" },
+    { id: "pacificdry", name: "Pacific Dry-Out", trade: "Water damage mitigation", area: "Bay Area", hours: "24/7", rate: "$450 minimum, drying equipment $95/day", rating: 4.6, jobs: 6, note: "Only when water reached floors, walls or the unit below" },
+    { id: "fogcity", name: "Fog City Heating", trade: "Heating (furnaces, boilers, wall heaters)", area: "San Francisco", hours: "Mon–Fri 7am–5pm; 24/7 emergency line", rate: "$189 diagnostic; after-hours $289; typical repair $250–900", rating: 4.7, jobs: 22, note: "Knows the boiler at 980 Clement" },
+    { id: "diablo", name: "Diablo Comfort HVAC", trade: "Air conditioning, heat pumps", area: "East Bay (Walnut Creek, Concord)", hours: "Mon–Sat 7am–7pm, same or next day in summer", rate: "$149 diagnostic; capacitor or contactor $180–350; compressor $1,800+", rating: 4.6, jobs: 17, note: "Only HVAC vendor covering Walnut Creek" },
+    { id: "castro", name: "Castro Handyman Co.", trade: "General handyman, small appliances, disposals", area: "San Francisco", hours: "Mon–Fri 9am–5pm", rate: "$95/hr, 2 hr minimum; disposal replacement $250–420 installed", rating: 4.5, jobs: 41, note: "Good for small jobs and turnovers" },
+    { id: "sutro", name: "Sutro Electric", trade: "Electrical", area: "San Francisco", hours: "Mon–Fri 8am–5pm; emergency $250 callout", rate: "$135/hr", rating: 4.7, jobs: 9, note: "" },
+  ];
+
+  // Times are written as local wall-clock times; they're stored as UTC so they render the same everywhere.
+  const SCENARIOS = [
+    {
+      id: "leak", label: "Active leak", tag: "Urgent", tagClass: "c-emergency",
+      tenant: "Maria Delgado", unit: "Unit 3B", address: "2418 Folsom St, San Francisco", owner: "Harold Kim",
+      start: "2026-10-20T19:40:00Z", weather: "62°F, clear",
+      context: "Third-floor unit; Unit 2B is directly below. Kitchen sink cabinet has the shutoff valves under the sink. Building main shutoff is in the garage, left wall.",
+      first: "water is pouring out from under my kitchen sink!! it's all over the floor",
+      quick: ["it's spraying from a pipe in the cabinet", "I turned the little valve and it slowed down", "I'm home all night, I have a dog", "how much is this going to cost me?"],
+    },
+    {
+      id: "disposal", label: "Garbage disposal", tag: "Self-fix", tagClass: "c-self_fix",
+      tenant: "James Okafor", unit: "Unit 2", address: "155 Guerrero St, San Francisco", owner: "Dana Whitfield",
+      start: "2026-10-24T11:05:00Z", weather: "66°F, sunny",
+      context: "InSinkErator Badger 5 disposal, installed 2022. Hex key slot on the bottom; red reset button on the bottom.",
+      first: "my garbage disposal stopped working, it just hums when I flip the switch",
+      quick: ["where's the reset button?", "I pressed it and now it doesn't even hum", "ok that worked!! thank you", "there's a spoon stuck in it"],
+    },
+    {
+      id: "heat", label: "No heat in winter", tag: "Habitability", tagClass: "c-emergency",
+      tenant: "Linh Tran", unit: "Unit 5", address: "980 Clement St, San Francisco", owner: "Rosa Mendes",
+      start: "2027-01-14T06:15:00Z", weather: "41°F outside, cold snap all week",
+      context: "Six-unit building with a shared gas boiler and radiators. Boiler serviced Oct 2026. Units 1–6 all on the same boiler.",
+      first: "heater's not coming on at all, apartment is 58 degrees and I have a baby",
+      quick: ["the radiators are ice cold", "my neighbor in unit 4 says theirs is off too", "can I buy a space heater and take it off rent?", "someone can come anytime, I'm home"],
+    },
+    {
+      id: "ac", label: "AC out", tag: "Normal", tagClass: "c-vendor",
+      tenant: "Devon Price", unit: "Unit 12", address: "1840 Oak Grove Rd, Walnut Creek", owner: "Harold Kim",
+      start: "2026-07-15T14:10:00Z", weather: "92°F, heat advisory not in effect",
+      context: "Central AC, Carrier condenser on the side yard, 2015. Tenant has lived here 3 years, no prior AC calls.",
+      first: "AC is blowing warm air since yesterday",
+      quick: ["the outside unit is humming but the fan isn't spinning", "I already checked the breaker", "I work from home, any day works", "can it be fixed today? it's really hot"],
+    },
+    {
+      id: "noise", label: "Noise complaint", tag: "Not maintenance", tagClass: "c-not_maintenance",
+      tenant: "Priya Nair", unit: "Unit 4A", address: "760 Haight St, San Francisco", owner: "Dana Whitfield",
+      start: "2026-10-22T23:30:00Z", weather: "55°F",
+      context: "Unit 5A is upstairs. Building quiet hours in the lease are 10pm–8am. Two prior noise complaints about 5A this year, both logged by the manager.",
+      first: "the people upstairs are having a party AGAIN, it's 11:30 on a thursday night",
+      quick: ["this is the third time", "can you just call them?", "I think I heard glass breaking and yelling", "should I call the police?"],
+    },
+    {
+      id: "free", label: "Free play", tag: "Stump it", tagClass: "c-none",
+      tenant: "Sam Lee", unit: "Unit 1", address: "312 Lake St, San Francisco", owner: "Rosa Mendes",
+      start: "2026-10-19T09:00:00Z", weather: "60°F, foggy",
+      context: "Four-unit 1920s building, gas stove, wall heater, shared laundry in the basement.",
+      first: "",
+      quick: ["I smell gas in the kitchen", "the toilet keeps running", "a mouse just ran across my kitchen", "can I paint my bedroom?"],
+    },
+  ];
+
+  // Pre-recorded first turn for the opening scenario, so the page shows what the agent does before anyone sends anything.
+  const EXAMPLE = {
+    replies: ["That sounds stressful, Maria. First: open the cabinet under the sink and turn both valves on the pipes clockwise until they stop. That should slow or stop the water. Towels on the floor for now.", "Is the water coming from a pipe, the faucet, or the drain? And is it reaching the floor outside the kitchen? I'm getting a plumber lined up now."],
+    triage: { lane: "emergency", trade: "Plumbing", urgency: "emergency", summary: "Active water leak under kitchen sink, water on floor, unit below at risk", reasoning: "Active water on the floor in a third-floor unit can damage 2B below within the hour. That's an emergency under policy, so I can dispatch without waiting for owner approval up to the emergency cap. Shutoff under the sink is the fastest way to limit damage." },
+    self_fix_steps: ["Close both angle stops under the sink (turn clockwise)", "If water keeps coming, shut the building main in the garage, left wall", "Put towels down and move anything off the cabinet floor"],
+    vendor: { id: "bayview", why: "Only plumber on our bench with 24/7 emergency service; ~90 min arrival tonight. Mission Rooter has no after-hours." },
+    proposed_times: ["Tonight, arrival by ~9:15 PM"],
+    estimate: { low: 300, high: 550, basis: "After-hours call $248 + 1–2 hrs at $218/hr" },
+    approval_needed: false,
+    approval_request: null,
+    manager_escalation: null,
+    status: "dispatching",
+    log: ["Classified as emergency: active leak, risk to unit below", "Sent shutoff instructions to tenant", "Paged Bayview Plumbing & Drain on emergency line", "Will notify owner Harold Kim after dispatch (emergency exception)"],
+  };
+
+  const LANES = [
+    ["emergency", "Emergency", "Dispatch now"],
+    ["self_fix", "Tenant can fix", "Walk them through it"],
+    ["vendor", "Needs vendor", "Book a visit"],
+    ["not_maintenance", "Not maintenance", "Route to manager"],
+  ];
+
+  // ---------- State ----------
+  const $ = (id) => document.getElementById(id);
+  const fmtTime = (d) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+  const fmtStamp = (d) => d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+  const money = (n) => "$" + Math.round(n).toLocaleString("en-US");
+
+  let tier = "default";
+  let limit = 300;
+  let sample = null, sampleChecked = false, sampleDenied = false;
+  let ctl = null;
+  const threads = {};
+  let current = SCENARIOS[0].id;
+
+  function newThread(s) {
+    const woNum = "WO-" + (4100 + SCENARIOS.indexOf(s) * 7 + Math.floor(Math.random() * 6));
+    return {
+      clock: new Date(s.start), msgs: [], decisions: [], approvals: [], escalations: [], log: [],
+      wo: { num: woNum, status: "new", lane: null, trade: "", urgency: "", vendor: null, window: "", estimate: null, approval: "not needed" },
+      busy: false, error: "", example: false,
+    };
+  }
+  function thread() { return threads[current] || (threads[current] = seed(SCENARIOS.find((s) => s.id === current))); }
+  function seed(s) {
+    const t = newThread(s);
+    if (s.id === "leak") {
+      // Opening state for the first scenario: one recorded exchange, clearly labeled.
+      t.msgs.push({ who: "tenant", text: s.first, at: new Date(t.clock) });
+      tick(t, 1);
+      t.example = true;
+      apply(t, structuredClone(EXAMPLE));
+    }
+    return t;
+  }
+  function tick(t, min) { t.clock = new Date(t.clock.getTime() + min * 60000); }
+  function addLog(t, who, text) { t.log.push({ at: new Date(t.clock), who, text }); }
+
+  // ---------- Agent ----------
+  function buildPrompt(t, s) {
+    const transcript = t.msgs.map((m) => {
+      const when = fmtStamp(m.at);
+      if (m.who === "tenant") return `[${when}] TENANT: ${m.text}`;
+      if (m.who === "agent") return `[${when}] YOU (texted tenant): ${m.text}`;
+      return `[${when}] EVENT: ${m.text}`;
+    }).join("\n");
+    const pending = t.approvals.filter((a) => a.status === "pending").map((a) => `${money(a.amount)} for ${a.summary}`);
+    return `You are the AI maintenance coordinator for ${FIRM.name}, a property management firm. You talk to tenants by SMS, triage requests, troubleshoot, book vendors from the firm's own bench, and get owner approval when policy requires it. This is a live product demo: a person is playing the tenant and may try to trip you up. Stay in role, be accurate, and follow policy.
+
+NOW: ${fmtStamp(t.clock)}. Weather: ${s.weather}.
+TENANT: ${s.tenant}, ${s.unit}, ${s.address}. Owner of this property: ${s.owner}.
+PROPERTY NOTES: ${s.context}
+
+FIRM POLICY
+- Owner approval limit: ${money(limit)}. If the high end of a job's estimate exceeds it, you must get owner approval BEFORE booking (set approval_needed true). Tell the tenant you're getting it approved; don't promise a time yet.
+- Emergency exception: for active water leaks, no heat in cold weather (habitability; SF Housing Code requires heat capable of 68°F), gas smell, sparking or electrical hazard, sewage backup, or no water, dispatch immediately without waiting, up to a $1,000 emergency cap, and notify the owner. Anything above $1,000 still needs approval.
+- Gas smell: tell the tenant to leave now, not touch switches, and call PG&E at 1-800-743-5000 or 911 from outside. Then dispatch.
+- Not maintenance (noise, neighbor disputes, lease, rent, parking, pets, alterations like painting): don't book a vendor. Route to ${FIRM.manager} with manager_escalation, tell the tenant who will follow up and when (next business morning unless urgent). Don't promise enforcement or share other tenants' info. If someone may be hurt or in danger, tell them to call 911; for a noise disturbance in progress, SF police non-emergency is 415-553-0123.
+- Self-fix: if a safe, simple fix exists (disposal reset, tripped breaker or GFCI, thermostat batteries or settings, pilot relight only with manufacturer steps, toilet flapper, clogged aerator), walk them through it one step at a time before sending a vendor. Never ask a tenant to do anything risky (opening panels, gas lines, ladders above 6 ft, electrical work).
+- Pick vendors only from the bench below, matching trade, service area and hours. Prefer the one that can arrive soonest when urgent, and the better value when not. Ask permission to enter, whether they'll be home, and about pets.
+- Vendors respond instantly in this demo: once a time is set (and approval granted if needed), you may treat the vendor as confirmed.
+- Tenant-caused damage (e.g., a spoon in the disposal) can be billed back per the lease; mention it neutrally only if relevant. Don't discuss rent credits; say the manager handles that.
+- Ask for a photo when it would help; the tenant can describe it in text.
+
+VENDOR BENCH
+${VENDORS.map((v) => `- id "${v.id}": ${v.name} | ${v.trade} | area: ${v.area} | hours: ${v.hours} | ${v.rate} | rating ${v.rating} over ${v.jobs} jobs with us${v.note ? " | " + v.note : ""}`).join("\n")}
+
+CURRENT WORK ORDER: ${JSON.stringify({ status: t.wo.status, lane: t.wo.lane, vendor: t.wo.vendor, window: t.wo.window, estimate: t.wo.estimate, approval: t.wo.approval, pending_approvals: pending })}
+
+CONVERSATION SO FAR
+${transcript}
+
+Decide your next move and write your next text(s) to the tenant. SMS style: plain text, no markdown, short and warm, at most 2 messages of up to ~300 characters each. If the last entry is an EVENT (like an owner decision) rather than the tenant, update the tenant accordingly. If nothing needs saying to the tenant, use an empty replies array.
+
+Reply with ONLY a JSON object of this shape:
+{
+  "replies": ["text to tenant", "optional second text"],
+  "triage": {"lane": "emergency" | "self_fix" | "vendor" | "not_maintenance" | "gathering_info", "trade": "Plumbing" | "...", "urgency": "emergency" | "urgent" | "routine" | "n/a", "summary": "one line", "reasoning": "2-3 sentences on why, citing policy where relevant"},
+  "self_fix_steps": ["step", "..."] or [],
+  "vendor": {"id": "vendor id from bench", "why": "one sentence on why this vendor over the others"} or null,
+  "proposed_times": ["e.g. Tomorrow 8–10 AM"] or [],
+  "estimate": {"low": number, "high": number, "basis": "short"} or null,
+  "approval_needed": true | false,
+  "approval_request": {"amount": number, "summary": "what the owner is approving, one line"} or null,
+  "manager_escalation": {"reason": "one line", "suggested_action": "one line"} or null,
+  "status": "gathering_info" | "troubleshooting" | "awaiting_approval" | "dispatching" | "scheduled" | "resolved" | "escalated",
+  "log": ["short past-tense line for each action you took this turn"]
+}
+Only include approval_request when you are asking for a new approval now. Only include manager_escalation when escalating now.`;
+  }
+
+  async function getSample() {
+    if (sampleChecked) return sample;
+    try { sample = window.claude ? await window.claude.use("sample") : null; } catch { sample = null; }
+    sampleChecked = true;
+    return sample;
+  }
+
+  async function runAgent(t, s) {
+    const smp = await getSample();
+    if (!smp || sampleDenied) {
+      showBanner(sampleDenied
+        ? "You declined letting this page use Claude, so the agent can't answer in this view. Reload to be asked again."
+        : "The live agent runs inside Claude. Open this page from its claude.ai link to text the agent.");
+      t.msgs.pop(); render(); return;
+    }
+    t.busy = true; t.error = ""; render();
+    ctl = new AbortController();
+    try {
+      const d = await smp.json(buildPrompt(t, s), { modelTier: tier, cache: false, signal: ctl.signal });
+      t.busy = false;
+      tick(t, tier === "quick" ? 1 : 2);
+      apply(t, d);
+    } catch (e) {
+      t.busy = false;
+      const code = e && e.code;
+      if (code === "cancelled") { /* user restarted or switched */ }
+      else if (code === "not_granted" || code === "sampling_disabled" || code === "capability_disabled" || code === "not_declared") {
+        sampleDenied = true;
+        showBanner("This page isn't allowed to use Claude in this view, so the agent can't reply.");
+      } else if (code === "rate_limited") t.error = "Too many messages too fast, or your Claude usage limit was reached. Wait a bit, then send again.";
+      else if (code === "invalid_json") t.error = "The agent's reply came back garbled. Send your message again.";
+      else t.error = "The agent didn't answer (" + (code || "unknown error") + "). Send your message again.";
+    }
+    render();
+  }
+
+  function apply(t, d) {
+    if (!d || typeof d !== "object") { t.error = "The agent's reply came back empty. Send again."; return; }
+    const replies = Array.isArray(d.replies) ? d.replies.map(String).filter((x) => x.trim()) : (d.reply ? [String(d.reply)] : []);
+    replies.slice(0, 3).forEach((r) => t.msgs.push({ who: "agent", text: r.trim(), at: new Date(t.clock) }));
+
+    const tri = d.triage || {};
+    const lane = ["emergency", "self_fix", "vendor", "not_maintenance", "gathering_info"].includes(tri.lane) ? tri.lane : (t.wo.lane || "gathering_info");
+    const vendor = d.vendor && VENDORS.find((v) => v.id === String(d.vendor.id)) ? { id: String(d.vendor.id), why: String(d.vendor.why || "") } : null;
+    const est = d.estimate && isFinite(+d.estimate.high) ? { low: +d.estimate.low || 0, high: +d.estimate.high, basis: String(d.estimate.basis || "") } : null;
+    const times = Array.isArray(d.proposed_times) ? d.proposed_times.map(String).slice(0, 4) : [];
+    const dec = { at: new Date(t.clock), lane, trade: String(tri.trade || ""), urgency: String(tri.urgency || ""), summary: String(tri.summary || ""), reasoning: String(tri.reasoning || ""),
+      steps: Array.isArray(d.self_fix_steps) ? d.self_fix_steps.map(String).slice(0, 8) : [], vendor, times, est, status: String(d.status || "") };
+    t.decisions.push(dec);
+
+    (Array.isArray(d.log) ? d.log : []).slice(0, 6).forEach((l) => addLog(t, "agent", String(l)));
+
+    // Work order
+    t.wo.lane = lane;
+    if (dec.trade) t.wo.trade = dec.trade;
+    if (dec.urgency) t.wo.urgency = dec.urgency;
+    if (vendor) t.wo.vendor = vendor.id;
+    if (times.length) t.wo.window = times.join(" · ");
+    if (est) t.wo.estimate = est;
+    if (dec.status) t.wo.status = dec.status;
+
+    // Approval: the agent asks, and the page double-checks the policy itself.
+    const hasOpen = t.approvals.some((a) => a.status === "pending");
+    const approved = t.approvals.some((a) => a.status === "approved" && est && a.amount >= est.high);
+    const emergencyOk = lane === "emergency" && est && est.high <= 1000;
+    const overLimit = est && est.high > limit && !approved && !emergencyOk && lane !== "not_maintenance";
+    if (!hasOpen && (d.approval_needed === true || overLimit) && !approved && est) {
+      const ar = d.approval_request || {};
+      const amount = Math.max(+ar.amount || 0, est.high);
+      t.approvals.push({ id: Date.now(), amount, summary: String(ar.summary || dec.summary || "Repair"), vendor: t.wo.vendor, status: "pending", at: new Date(t.clock) });
+      addLog(t, "policy", `Estimate up to ${money(est.high)} is over the ${money(limit)} limit; approval requested from ${scen().owner}`);
+      t.wo.status = "awaiting_approval"; t.wo.approval = "pending";
+    } else if (emergencyOk && est.high > limit && !t.log.some((l) => l.who === "policy" && l.text.startsWith("Emergency exception"))) {
+      addLog(t, "policy", `Emergency exception: dispatching up to ${money(est.high)} without waiting; owner notified`);
+      t.wo.approval = "emergency exception";
+    }
+    if (d.manager_escalation && d.manager_escalation.reason) {
+      t.escalations.push({ reason: String(d.manager_escalation.reason), action: String(d.manager_escalation.suggested_action || ""), at: new Date(t.clock) });
+      addLog(t, "manager", "Escalated to " + FIRM.manager.split(" (")[0] + ": " + d.manager_escalation.reason);
+    }
+  }
+
+  // ---------- Actions ----------
+  function scen() { return SCENARIOS.find((s) => s.id === current); }
+
+  async function send(text) {
+    text = text.trim();
+    const t = thread(), s = scen();
+    if (!text || t.busy) return;
+    t.example = false;
+    tick(t, 1);
+    t.msgs.push({ who: "tenant", text, at: new Date(t.clock) });
+    $("box").value = "";
+    render();
+    await runAgent(t, s);
+  }
+
+  async function decide(id, ok) {
+    const t = thread(), s = scen();
+    const a = t.approvals.find((x) => x.id === id);
+    if (!a || a.status !== "pending" || t.busy) return;
+    a.status = ok ? "approved" : "declined";
+    tick(t, 4);
+    t.wo.approval = a.status;
+    addLog(t, "owner", `${s.owner} ${a.status} ${money(a.amount)}: ${a.summary}`);
+    t.msgs.push({ who: "event", text: `Owner ${s.owner} ${ok ? "APPROVED" : "DECLINED"} ${money(a.amount)} for: ${a.summary}.${ok ? " Book the vendor and confirm a time with the tenant." : " Do not book. Tell the tenant the manager will follow up on next steps, and escalate to the manager."}`, at: new Date(t.clock) });
+    render();
+    await runAgent(t, s);
+  }
+
+  function restart() {
+    if (ctl) ctl.abort();
+    const s = scen();
+    threads[current] = seed(s);
+    if (s.id !== "leak") $("box").value = s.first;
+    render();
+  }
+
+  function pick(id) {
+    current = id;
+    const t = thread(), s = scen();
+    if (!t.msgs.length) $("box").value = s.first; else $("box").value = "";
+    render();
+  }
+
+  function showBanner(msg) { const b = $("banner"); b.textContent = msg; b.hidden = false; }
+
+  // ---------- Render ----------
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  function renderScenarios() {
+    const nav = $("scen"); nav.textContent = "";
+    SCENARIOS.forEach((s) => {
+      const b = el("button"); b.type = "button"; b.setAttribute("aria-pressed", String(s.id === current));
+      const tag = el("span", "tag " + s.tagClass, s.tag); tag.style.background = "transparent";
+      b.append(tag, el("b", null, s.label), el("small", null, s.id === "free" ? "Your own request" : `${s.tenant} · ${s.address.split(",")[0]}`));
+      b.onclick = () => pick(s.id);
+      nav.append(b);
+    });
+  }
+
+  function renderPhone(t, s) {
+    const box = $("msgs"); box.textContent = "";
+    $("clock").textContent = fmtTime(t.clock).replace(/\s?[AP]M/, "");
+    $("who").textContent = `You're ${s.tenant}, ${s.unit}, ${s.address}. ${fmtStamp(t.clock)} · ${s.weather}.`;
+    let lastStamp = 0;
+    if (!t.msgs.length) box.append(el("div", "note", s.id === "free" ? "Text anything a tenant might send. Try something that isn't a repair, or something risky." : "The tenant's first text is ready below. Press send, or rewrite it."));
+    t.msgs.forEach((m) => {
+      if (m.who === "event") return;
+      if (m.at - lastStamp > 20 * 60000) { box.append(el("div", "stamp", fmtStamp(m.at))); }
+      lastStamp = +m.at;
+      box.append(el("div", "bub " + (m.who === "tenant" ? "me" : "them"), m.text));
+    });
+    if (t.example) box.append(el("div", "note", "Recorded example reply. Text back to continue live."));
+    if (t.busy) { const ty = el("div", "typing"); ty.append(el("i"), el("i"), el("i")); ty.setAttribute("aria-label", "Agent is typing"); box.append(ty); }
+    if (t.error) box.append(el("div", "note err", t.error));
+    box.scrollTop = box.scrollHeight;
+
+    const q = $("quick"); q.textContent = "";
+    s.quick.forEach((txt) => { const b = el("button", null, txt); b.type = "button"; b.title = txt; b.onclick = () => send(txt); b.disabled = t.busy; q.append(b); });
+    $("sendBtn").disabled = t.busy;
+  }
+
+  function renderAgent(t) {
+    const root = $("agent"); root.textContent = "";
+    const d = t.decisions[t.decisions.length - 1];
+    const st = $("status");
+    if (t.busy) { st.className = "chip c-pending"; st.textContent = "Thinking…"; }
+    else if (d) { st.className = "chip c-" + (d.lane || "none"); st.textContent = (d.status || d.lane || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()); }
+    else { st.className = "chip c-none"; st.textContent = "Waiting for tenant"; }
+
+    // Triage lanes
+    const tb = el("div", "block"); tb.append(el("h3", null, "Triage"));
+    const lanes = el("div", "lanes");
+    LANES.forEach(([k, name, sub]) => { const l = el("div", "lane l-" + k + (d && d.lane === k ? " on" : "")); l.append(el("b", null, name), el("span", null, sub)); lanes.append(l); });
+    tb.append(lanes);
+    root.append(tb);
+
+    if (!d) { root.append(el("div", "empty", t.busy ? "The agent is reading the message…" : "Send the tenant's text. The agent's triage, vendor pick and reasoning show up here.")); return; }
+
+    const sum = el("dl", "kv");
+    const add = (k, v) => { if (!v) return; sum.append(el("dt", null, k), el("dd", null, v)); };
+    add("Issue", d.summary); add("Trade", d.trade); add("Urgency", d.urgency);
+    root.append(sum);
+    if (d.reasoning) root.append(el("div", "reason", d.reasoning));
+
+    if (d.steps.length) {
+      const b = el("div", "block"); b.append(el("h3", null, "Steps for the tenant"));
+      const ol = el("ol", "steps"); d.steps.forEach((x) => ol.append(el("li", null, x))); b.append(ol); root.append(b);
+    }
+
+    const showVendors = d.vendor || d.lane === "vendor" || d.lane === "emergency";
+    if (showVendors) {
+      const b = el("div", "block"); b.append(el("h3", null, "Vendor bench"));
+      const list = el("div", "vendors");
+      const chosen = d.vendor ? d.vendor.id : t.wo.vendor;
+      VENDORS.forEach((v) => {
+        const row = el("div", "v" + (v.id === chosen ? " pick" : chosen ? " dim" : ""));
+        const left = el("div"); left.append(el("b", null, v.name), el("div", "vt", `${v.trade} · ${v.hours}`));
+        const right = el("div", "vr mono", `★ ${v.rating} · ${v.jobs} jobs`);
+        row.append(left, right);
+        if (v.id === chosen && d.vendor && d.vendor.why) row.append(el("div", "why", "Why: " + d.vendor.why));
+        list.append(row);
+      });
+      b.append(list); root.append(b);
+    }
+
+    if (d.times.length) {
+      const b = el("div", "block"); b.append(el("h3", null, "Proposed times"));
+      const tm = el("div", "times"); d.times.forEach((x) => tm.append(el("span", null, x))); b.append(tm); root.append(b);
+    }
+
+    const est = d.est || t.wo.estimate;
+    if (est) {
+      const b = el("div", "block"); b.append(el("h3", null, `Estimate ${money(est.low)}–${money(est.high)}`));
+      const max = Math.max(est.high, limit) * 1.15;
+      const m = el("div", "meter");
+      const r = el("div", "rng" + (est.high > limit ? " over" : "")); r.style.left = (est.low / max * 100) + "%"; r.style.width = Math.max(2, (est.high - est.low) / max * 100) + "%";
+      const li = el("div", "lim"); li.style.left = (limit / max * 100) + "%"; li.title = "Approval limit";
+      m.append(r, li); b.append(m);
+      const ml = el("div", "meter-l"); ml.append(el("span", null, est.basis || ""), el("span", "mono", `limit ${money(limit)}`)); b.append(ml);
+      root.append(b);
+    }
+
+    if (t.decisions.length > 1) {
+      const det = el("details", "hist"); det.append(el("summary", null, `Earlier decisions (${t.decisions.length - 1})`));
+      const ol = el("ol"); t.decisions.slice(0, -1).forEach((x) => ol.append(el("li", null, `${fmtTime(x.at)} · ${x.lane.replace(/_/g, " ")} · ${x.summary}`)));
+      det.append(ol); root.append(det);
+    }
+  }
+
+  function renderOwner(t, s) {
+    $("ownerName").textContent = `Owner: ${s.owner}`;
+    const ap = $("approvals"); ap.textContent = "";
+    ap.append(el("h3", null, "Approval requests"));
+    if (!t.approvals.length) ap.append(el("div", "muted", `None. The agent asks ${s.owner} before any non-emergency job over ${money(limit)}.`));
+    t.approvals.slice().reverse().forEach((a) => {
+      const c = el("div", "card" + (a.status === "pending" ? " alert" : ""));
+      const r1 = el("div", "row"); r1.append(el("span", "amt", money(a.amount)), el("span", "chip c-" + a.status, a.status[0].toUpperCase() + a.status.slice(1)));
+      const v = VENDORS.find((x) => x.id === a.vendor);
+      c.append(r1, el("div", null, a.summary), el("div", "muted", `${v ? v.name + " · " : ""}${t.wo.num} · requested ${fmtTime(a.at)}`));
+      if (a.status === "pending") {
+        const acts = el("div", "acts");
+        const y = el("button", "btn primary", "Approve"); y.type = "button"; y.onclick = () => decide(a.id, true); y.disabled = t.busy;
+        const n = el("button", "btn danger", "Decline"); n.type = "button"; n.onclick = () => decide(a.id, false); n.disabled = t.busy;
+        acts.append(y, n); c.append(acts);
+      }
+      ap.append(c);
+    });
+
+    const es = $("escalations"); es.textContent = "";
+    if (t.escalations.length) {
+      es.append(el("h3", null, "Manager inbox · " + FIRM.manager.split(" (")[0]));
+      t.escalations.slice().reverse().forEach((x) => {
+        const c = el("div", "card esc");
+        c.append(el("div", null, x.reason));
+        if (x.action) c.append(el("div", "muted", "Suggested: " + x.action));
+        c.append(el("div", "muted mono", `${fmtTime(x.at)} · ${s.tenant}, ${s.unit}`));
+        es.append(c);
+      });
+    }
+
+    const wo = $("wo"); wo.textContent = "";
+    const g = el("div", "wo");
+    const v = VENDORS.find((x) => x.id === t.wo.vendor);
+    const field = (k, val) => { const d = el("div"); d.append(el("label", null, k), el("span", null, val || "—")); g.append(d); };
+    field("Number", t.wo.num); field("Status", (t.wo.status || "").replace(/_/g, " "));
+    field("Unit", `${s.unit}, ${s.address.split(",")[0]}`); field("Tenant", s.tenant);
+    field("Trade", t.wo.trade); field("Urgency", t.wo.urgency);
+    field("Vendor", v ? v.name : ""); field("Window", t.wo.window);
+    field("Estimate", t.wo.estimate ? `${money(t.wo.estimate.low)}–${money(t.wo.estimate.high)}` : ""); field("Owner approval", t.wo.approval);
+    wo.append(g);
+
+    const log = $("log"); log.textContent = "";
+    if (!t.log.length) log.append(el("li", "muted", "Nothing yet."));
+    t.log.slice().reverse().forEach((l) => {
+      const li = el("li"); const tm = el("time", null, fmtTime(l.at));
+      const body = el("span"); body.append(el("span", "who " + l.who, l.who === "agent" ? "Agent" : l.who === "owner" ? "Owner" : l.who === "manager" ? "Manager" : "Policy"), document.createTextNode(l.text));
+      li.append(tm, body); log.append(li);
+    });
+  }
+
+  function render() {
+    const t = thread(), s = scen();
+    renderScenarios(); renderPhone(t, s); renderAgent(t); renderOwner(t, s);
+  }
+
+  // ---------- Wire up ----------
+  $("compose").addEventListener("submit", (e) => { e.preventDefault(); send($("box").value); });
+  $("reset").onclick = restart;
+  $("limit").addEventListener("change", () => { const v = +$("limit").value; limit = isFinite(v) && v >= 0 ? v : 300; render(); });
+  const setTier = (x) => { tier = x; $("tierDefault").setAttribute("aria-pressed", String(x === "default")); $("tierQuick").setAttribute("aria-pressed", String(x === "quick")); };
+  $("tierDefault").onclick = () => setTier("default");
+  $("tierQuick").onclick = () => setTier("quick");
+
+  render();
+  getSample().then((s) => { if (!s) showBanner("The live agent runs inside Claude. Open this page from its claude.ai link to text the agent."); });
+})();
+</script>
